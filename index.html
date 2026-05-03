@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pulsewire News Room</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-lockup" aria-label="Pulsewire home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <div>
+          <p class="eyebrow">Pulsewire</p>
+          <h1>News Room</h1>
+        </div>
+      </div>
+
+      <div class="search-wrap">
+        <label class="sr-only" for="searchInput">Search headlines</label>
+        <input id="searchInput" type="search" autocomplete="off" placeholder="Search headlines">
+      </div>
+
+      <div class="top-actions">
+        <button class="icon-button" id="readAllButton" type="button">Listen</button>
+        <button class="icon-button" id="stopButton" type="button">Stop</button>
+        <button class="icon-button" id="refreshButton" type="button">Refresh</button>
+      </div>
+    </header>
+
+    <div class="ticker-shell" aria-live="polite">
+      <div class="ticker-label">
+        <span class="live-dot" aria-hidden="true"></span>
+        Flash
+      </div>
+      <div class="ticker-viewport">
+        <div class="ticker-track" id="tickerTrack"></div>
+      </div>
+    </div>
+
+    <main class="layout">
+      <nav class="topic-tabs" id="topicTabs" aria-label="News topics"></nav>
+
+      <section class="newsroom-grid">
+        <div class="lead-column">
+          <section class="feature-panel" id="featurePanel" aria-live="polite"></section>
+
+          <section class="board-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Latest</p>
+                <h2>News Board</h2>
+              </div>
+              <div class="board-stats" id="boardStats"></div>
+            </div>
+            <div class="article-grid" id="articleGrid"></div>
+          </section>
+        </div>
+
+        <aside class="side-column" aria-label="Live news tools">
+          <section class="flash-panel">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Live</p>
+                <h2>Flashes</h2>
+              </div>
+              <span class="status-pill" id="feedStatus">Loading</span>
+            </div>
+            <div class="flash-list" id="flashList"></div>
+          </section>
+
+          <section class="listen-panel">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Audio</p>
+                <h2>Now Reading</h2>
+              </div>
+            </div>
+            <div class="reader-card" id="readerCard">
+              <p class="reader-source">Idle</p>
+              <h3>Select a headline</h3>
+              <div class="voice-bars" aria-hidden="true">
+                <span></span><span></span><span></span><span></span><span></span>
+              </div>
+            </div>
+          </section>
+
+          <section class="source-panel">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Mix</p>
+                <h2>Sources</h2>
+              </div>
+            </div>
+            <div class="source-list" id="sourceList"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="insight-overlay" id="insightOverlay" hidden>
+    <section class="insight-modal" role="dialog" aria-modal="true" aria-labelledby="insightTitle">
+      <button class="insight-close" id="insightClose" type="button" aria-label="Close insight">&times;</button>
+      <p class="eyebrow" id="insightMode">AI Summary</p>
+      <h2 id="insightTitle">Headline insight</h2>
+      <p class="insight-meta" id="insightMeta"></p>
+      <div class="insight-content" id="insightContent"></div>
+    </section>
+  </div>
+
+  <script src="/app.js" defer></script>
+</body>
+
+</html>

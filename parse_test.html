@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<body>
+<script>
+async function test() {
+  const urls = [
+    "https://indianexpress.com/feed/",
+    "https://timesofindia.indiatimes.com/rssfeeds/-2128936835.cms",
+    "https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml",
+    "https://feeds.feedburner.com/ndtvnews-top-stories"
+  ];
+  
+  for (const url of urls) {
+    try {
+      const res = await fetch(`http://127.0.0.1:4173/api/feed?url=${encodeURIComponent(url)}`);
+      const xml = await res.text();
+      const documentXml = new DOMParser().parseFromString(xml, "text/xml");
+      const hasParserError = documentXml.querySelector("parsererror");
+      console.log(`URL: ${url}`);
+      console.log(`Parser Error: ${!!hasParserError}`);
+      if (hasParserError) {
+          console.log(`Error content: ${hasParserError.textContent}`);
+      }
+    } catch(e) {
+      console.log(`Fetch error for ${url}: ${e}`);
+    }
+  }
+}
+test();
+</script>
+</body>
+</html>
