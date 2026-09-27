@@ -402,4 +402,6 @@ if (require.main === module && !process.env.VERCEL) {
   });
 }
 
-module.exports = app;
+const handler = (req, res) => app(req, res);
+handler.app = app;
+module.exports = handler;
