@@ -585,68 +585,75 @@ If no articles match, return {"articleIds": [], "quiz": []}.
 }
 
 async function handleRequest(req, res) {
-  const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  try {
+    const rawUrl = req.url || "/";
+    const host = (req.headers && req.headers.host) ? req.headers.host : "localhost";
+    const requestUrl = new URL(rawUrl, `http://${host}`);
 
-  if (req.method === "OPTIONS") {
-    send(res, 204, "", {
-      "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type"
-    });
-    return;
-  }
-
-  if (!["GET", "HEAD", "POST"].includes(req.method)) {
-    send(res, 405, "Method not allowed", {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Allow": "GET, HEAD, POST, OPTIONS"
-    });
-    return;
-  }
-
-  if (requestUrl.pathname === "/api/assistant") {
-    if (req.method !== "POST") {
-      send(res, 405, "Method not allowed", {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Allow": "POST, OPTIONS"
-      });
-      return;
-    }
-    await handleAssistantRequest(req, res);
-    return;
-  }
-
-  if (requestUrl.pathname === "/api/insight") {
-    if (req.method !== "POST") {
-      send(res, 405, "Method not allowed", {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Allow": "POST, OPTIONS"
+    if (req.method === "OPTIONS") {
+      send(res, 204, "", {
+        "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type"
       });
       return;
     }
 
-    await handleInsight(req, res);
-    return;
-  }
-
-  if (requestUrl.pathname === "/api/fact-check") {
-    if (req.method !== "POST") {
+    if (!["GET", "HEAD", "POST"].includes(req.method)) {
       send(res, 405, "Method not allowed", {
         "Content-Type": "text/plain; charset=utf-8",
-        "Allow": "POST, OPTIONS"
+        "Allow": "GET, HEAD, POST, OPTIONS"
       });
       return;
     }
 
-    await handleFactCheckRequest(req, res);
-    return;
-  }
+    if (requestUrl.pathname === "/api/assistant") {
+      if (req.method !== "POST") {
+        send(res, 405, "Method not allowed", {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Allow": "POST, OPTIONS"
+        });
+        return;
+      }
+      await handleAssistantRequest(req, res);
+      return;
+    }
 
-  if (requestUrl.pathname === "/api/feed") {
-    await handleFeedProxy(req, res, requestUrl);
-    return;
-  }
+    if (requestUrl.pathname === "/api/insight") {
+      if (req.method !== "POST") {
+        send(res, 405, "Method not allowed", {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Allow": "POST, OPTIONS"
+        });
+        return;
+      }
 
-  await serveStatic(req, res, requestUrl.pathname);
+      await handleInsight(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/fact-check") {
+      if (req.method !== "POST") {
+        send(res, 405, "Method not allowed", {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Allow": "POST, OPTIONS"
+        });
+        return;
+      }
+
+      await handleFactCheckRequest(req, res);
+      return;
+    }
+
+    if (requestUrl.pathname === "/api/feed") {
+      await handleFeedProxy(req, res, requestUrl);
+      return;
+    }
+
+    await serveStatic(req, res, requestUrl.pathname);
+  } catch (err) {
+    console.error("handleRequest error:", err);
+    sendJson(res, 500, { error: err.message || "Internal server error" });
+  }
 }
 
 function createServer() {
