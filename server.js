@@ -675,4 +675,10 @@ if (require.main === module) {
   start(DEFAULT_PORT);
 }
 
-module.exports = handleRequest;
+module.exports = {
+  handleRequest,
+  handleFeedProxy,
+  handleInsight,
+  handleFactCheckRequest,
+  handleAssistantRequest
+};
