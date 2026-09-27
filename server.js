@@ -1,7 +1,7 @@
-const http = require("node:http");
-const fs = require("node:fs/promises");
-const fsSync = require("node:fs");
-const path = require("node:path");
+const http = require("http");
+const fs = require("fs").promises;
+const fsSync = require("fs");
+const path = require("path");
 
 let ROOT_DIR = path.join(__dirname, "public");
 // If there's no public/ folder, serve files from the script directory so
