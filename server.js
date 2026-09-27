@@ -1,17 +1,10 @@
-const http = require("http");
-const fs = require("fs").promises;
-const fsSync = require("fs");
+const express = require("express");
 const path = require("path");
+const fsSync = require("fs");
 
-let ROOT_DIR = path.join(__dirname, "public");
-// If there's no public/ folder, serve files from the script directory so
-// simple setups (index.html alongside server.js) just work.
-if (!fsSync.existsSync(ROOT_DIR)) {
-  ROOT_DIR = __dirname;
-}
-const DEFAULT_PORT = Number(process.env.PORT) || 4173;
+const app = express();
+
 const CACHE_MS = 5 * 60 * 1000;
-
 const cache = new Map();
 const insightCache = new Map();
 
@@ -24,7 +17,6 @@ const ALLOWED_FEED_HOSTS = new Set([
   "techcrunch.com",
   "www.aljazeera.com",
   "www.sciencedaily.com",
-  // Indian news sources
   "www.thehindu.com",
   "timesofindia.indiatimes.com",
   "feeds.feedburner.com",
@@ -34,104 +26,29 @@ const ALLOWED_FEED_HOSTS = new Set([
   "ndtvnews.feedburner.com"
 ]);
 
-const MIME_TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".css": "text/css; charset=utf-8",
-  ".js": "text/javascript; charset=utf-8",
-  ".json": "application/json; charset=utf-8",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".webp": "image/webp"
-};
-
-// Default Gemini API keys (supplied). For production it's safer to set
-// them in the environment instead of keeping keys in source.
 const DEFAULT_GEMINI_SUMMARY_KEY = "AIzaSyDNCpoeEN_yja2L1eFLtjMJPZ6vIRqAbdA";
 const DEFAULT_GEMINI_CONTEXT_KEY = "AIzaSyDNCpoeEN_yja2L1eFLtjMJPZ6vIRqAbdA";
 
-// Fact Checker — Google Fact Check API key (optional)
-const GOOGLE_FACT_API_KEY = process.env.GOOGLE_FACT_API_KEY || "";
-
-function send(res, status, body, headers = {}, headOnly = false) {
-  if (res.headersSent) return;
-  res.statusCode = status;
-  for (const [key, val] of Object.entries(headers)) {
-    res.setHeader(key, val);
-  }
-  if (!res.getHeader("X-Content-Type-Options")) {
-    res.setHeader("X-Content-Type-Options", "nosniff");
-  }
-  res.end(headOnly ? undefined : body);
-}
-
-function sendJson(res, status, payload, headOnly = false) {
-  send(res, status, JSON.stringify(payload), {
-    "Content-Type": "application/json; charset=utf-8"
-  }, headOnly);
-}
-
-function readRequestBody(req, limit = 32000) {
-  if (req.body) {
-    if (typeof req.body === "string") return Promise.resolve(req.body);
-    if (typeof req.body === "object") return Promise.resolve(JSON.stringify(req.body));
-  }
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
-
-    req.on("data", (chunk) => {
-      size += chunk.length;
-
-      if (size > limit) {
-        reject(new Error("Request body is too large."));
-        req.destroy();
-        return;
-      }
-
-      chunks.push(chunk);
-    });
-
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", reject);
-  });
-}
+app.use(express.json({ limit: "2mb" }));
+app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(__dirname));
 
 function validateFeedUrl(rawUrl) {
-  if (!rawUrl) {
-    throw new Error("Missing feed URL.");
-  }
-
+  if (!rawUrl) throw new Error("Missing feed URL.");
   let feedUrl;
-  try {
-    feedUrl = new URL(rawUrl);
-  } catch {
-    throw new Error("Invalid feed URL.");
-  }
-
-  if (!["http:", "https:"].includes(feedUrl.protocol)) {
-    throw new Error("Only HTTP and HTTPS feeds are supported.");
-  }
-
-  if (!ALLOWED_FEED_HOSTS.has(feedUrl.hostname)) {
-    throw new Error("This feed host is not on the allowlist.");
-  }
-
+  try { feedUrl = new URL(rawUrl); } catch { throw new Error("Invalid feed URL."); }
+  if (!["http:", "https:"].includes(feedUrl.protocol)) throw new Error("Only HTTP and HTTPS feeds are supported.");
+  if (!ALLOWED_FEED_HOSTS.has(feedUrl.hostname)) throw new Error("This feed host is not on the allowlist.");
   return feedUrl;
 }
 
 async function fetchFeed(feedUrl) {
   const cacheKey = feedUrl.href;
   const cached = cache.get(cacheKey);
-
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.body;
-  }
+  if (cached && cached.expiresAt > Date.now()) return cached.body;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8500);
-
   try {
     const response = await fetch(feedUrl, {
       signal: controller.signal,
@@ -140,50 +57,33 @@ async function fetchFeed(feedUrl) {
         "User-Agent": "PulsewireNewsRoom/1.0"
       }
     });
-
-    if (!response.ok) {
-      throw new Error(`Feed responded with ${response.status}.`);
-    }
-
+    if (!response.ok) throw new Error(`Feed responded with ${response.status}.`);
     const body = await response.text();
-    cache.set(cacheKey, {
-      body,
-      expiresAt: Date.now() + CACHE_MS
-    });
-
+    cache.set(cacheKey, { body, expiresAt: Date.now() + CACHE_MS });
     return body;
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function handleFeedProxy(req, res, requestUrl) {
-  const headOnly = req.method === "HEAD";
-
+app.get("/api/feed", async (req, res) => {
   try {
-    const feedUrl = validateFeedUrl(requestUrl.searchParams.get("url"));
+    const rawUrl = req.query.url;
+    const feedUrl = validateFeedUrl(rawUrl);
     const body = await fetchFeed(feedUrl);
-
-    send(res, 200, body, {
-      "Content-Type": "application/xml; charset=utf-8",
-      "Cache-Control": "public, max-age=300"
-    }, headOnly);
+    res.setHeader("Content-Type", "application/xml; charset=utf-8");
+    res.setHeader("Cache-Control", "public, max-age=300");
+    res.status(200).send(body);
   } catch (error) {
-    sendJson(res, 400, {
-      error: error.message || "Unable to fetch feed."
-    }, headOnly);
+    res.status(400).json({ error: error.message || "Unable to fetch feed." });
   }
-}
+});
 
-// ─── Fact Checker (Gemini 2.5 Flash) ─────────────────────────────────────────
-
-async function handleFactCheckRequest(req, res) {
+app.post("/api/fact-check", async (req, res) => {
   try {
-    const body = await readRequestBody(req, 64 * 1024);
-    const { query } = JSON.parse(body);
+    const { query } = req.body || {};
     if (!query || typeof query !== "string") {
-      sendJson(res, 400, { error: "Missing query field." });
-      return;
+      return res.status(400).json({ error: "Missing query field." });
     }
 
     const claim = query.trim();
@@ -216,8 +116,7 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences, 
 
     if (!geminiRes.ok) {
       console.error("Gemini API error:", JSON.stringify(geminiData));
-      sendJson(res, 500, { error: geminiData?.error?.message || "Gemini API request failed." });
-      return;
+      return res.status(500).json({ error: geminiData?.error?.message || "Gemini API request failed." });
     }
 
     const raw = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text || "";
@@ -227,8 +126,7 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences, 
     try {
       parsed = JSON.parse(cleaned);
     } catch (parseErr) {
-      console.error("Gemini JSON parse error. Raw:", raw);
-      sendJson(res, 200, {
+      return res.status(200).json({
         success: true,
         results: [{
           claim,
@@ -239,7 +137,6 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences, 
           type: "ai_verified"
         }]
       });
-      return;
     }
 
     let keyFactsHtml = "";
@@ -247,7 +144,7 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences, 
       keyFactsHtml = " Key facts: " + parsed.key_facts.join("; ") + ".";
     }
 
-    sendJson(res, 200, {
+    res.status(200).json({
       success: true,
       results: [{
         claim,
@@ -261,10 +158,9 @@ Respond ONLY with valid JSON in this exact format (no markdown, no code fences, 
     });
   } catch (err) {
     console.error("Fact-check error:", err.message);
-    sendJson(res, 500, { error: err.message || "Something went wrong." });
+    res.status(500).json({ error: err.message || "Something went wrong." });
   }
-}
-
+});
 
 function normalizeArticle(rawArticle = {}) {
   const article = {
@@ -276,10 +172,7 @@ function normalizeArticle(rawArticle = {}) {
     link: String(rawArticle.link || "").trim().slice(0, 500)
   };
 
-  if (!article.title) {
-    throw new Error("Article title is required.");
-  }
-
+  if (!article.title) throw new Error("Article title is required.");
   return article;
 }
 
@@ -326,22 +219,15 @@ function extractGeminiText(payload) {
 }
 
 async function askGemini(mode, article) {
-  // Select API key based on mode. Allow overriding via environment variables.
   const defaultKey = mode === "summary" ? DEFAULT_GEMINI_SUMMARY_KEY : DEFAULT_GEMINI_CONTEXT_KEY;
   const envKey = mode === "summary" ? process.env.GEMINI_SUMMARY_KEY : process.env.GEMINI_CONTEXT_KEY;
   const apiKey = envKey || process.env.GEMINI_API_KEY || defaultKey;
-  if (!apiKey) {
-    throw new Error("GEMINI_API_KEY is not set.");
-  }
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not set.");
 
-  // Allow overriding model via GEMINI_MODEL; default to a flash model known
-  // to support generateContent.
   const model = process.env.GEMINI_MODEL || "models/gemini-2.5-flash-lite";
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/${model}:generateContent?key=${apiKey}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       systemInstruction: {
         parts: [{
@@ -350,31 +236,17 @@ async function askGemini(mode, article) {
             : "You are a careful news assistant. Be concise, neutral, and do not add unsupported facts."
         }]
       },
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: insightPrompt(mode, article) }]
-        }
-      ],
-      generationConfig: {
-        // Newer Gemini models use internal thinking tokens that count towards
-        // the maxOutputTokens limit. We use 1000 to avoid arbitrary truncation.
-        maxOutputTokens: 1000,
-        temperature: 0.25
-      }
+      contents: [{ role: "user", parts: [{ text: insightPrompt(mode, article) }] }],
+      generationConfig: { maxOutputTokens: 1000, temperature: 0.25 }
     })
   });
 
   if (!response.ok) {
     let detail = "";
-
     try {
       const errorPayload = await response.json();
       detail = errorPayload?.error?.message ? ` ${errorPayload.error.message}` : "";
-    } catch {
-      detail = "";
-    }
-
+    } catch { detail = ""; }
     throw new Error(`AI service responded with ${response.status}.${detail}`);
   }
 
@@ -384,37 +256,27 @@ async function askGemini(mode, article) {
 function fitWordWindow(text, minWords, maxWords) {
   const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
   const fillers = {
-    1: "More.",
-    2: "More soon.",
-    3: "More details follow.",
-    4: "More verified details follow.",
-    5: "More verified updates may follow.",
-    6: "More verified updates may clarify impact.",
-    7: "More verified updates may clarify the impact.",
-    8: "More verified updates may clarify the wider impact.",
-    9: "More verified updates may clarify the wider public impact.",
-    10: "More verified updates may clarify the wider public impact soon."
+    1: "More.", 2: "More soon.", 3: "More details follow.", 4: "More verified details follow.",
+    5: "More verified updates may follow.", 6: "More verified updates may clarify impact.",
+    7: "More verified updates may clarify the impact.", 8: "More verified updates may clarify the wider impact.",
+    9: "More verified updates may clarify the wider public impact.", 10: "More verified updates may clarify the wider public impact soon."
   };
-
   while (words.length < minWords) {
     const gap = Math.min(10, minWords - words.length);
     words.push(...fillers[gap].split(" "));
   }
-
   let finalWords = words;
   if (finalWords.length > maxWords) {
     const clipped = finalWords.slice(0, maxWords);
     const sentenceEnd = clipped.findLastIndex((word, index) => index >= minWords - 1 && /[.!?]$/.test(word));
     finalWords = sentenceEnd >= minWords - 1 ? clipped.slice(0, sentenceEnd + 1) : clipped;
   }
-
   const sentence = finalWords.join(" ").replace(/[,:;]$/, "");
   return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
 }
 
 function compactWords(text, maxWords) {
-  const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
-  return words.slice(0, maxWords).join(" ");
+  return text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean).slice(0, maxWords).join(" ");
 }
 
 function withoutTerminalPunctuation(text) {
@@ -423,115 +285,55 @@ function withoutTerminalPunctuation(text) {
 
 function localInsight(mode, article) {
   const description = article.description || "The available feed gives a headline but only limited supporting detail.";
-
   if (mode === "summary") {
     const headline = withoutTerminalPunctuation(compactWords(article.title, 18));
     const detail = withoutTerminalPunctuation(compactWords(description, 24));
-
     return fitWordWindow(
       `This ${article.topicLabel.toLowerCase()} story from ${article.source} reports ${headline}. ${detail}. It highlights the latest development, why it matters now, and what readers should watch as verified updates clarify the impact.`,
-      50,
-      70
+      50, 70
     );
   }
-
-  // Produce a concise ~100-word context when Gemini is not available.
   const ctx = `Present development: ${article.title}. ${description} Past background: the feed does not include a full history, so place this item within the wider ${article.topicLabel.toLowerCase()} cycle and mention likely relevant institutions, policy, or market forces. Why it matters now: explain the immediate stakes in a sentence. What to watch next: official responses, further reporting, and data that would clarify the impact.`;
-
   return fitWordWindow(ctx, 100, 100);
 }
 
 async function generateInsight(mode, article) {
   const cacheKey = `${mode}:${article.source}:${article.title}`;
   const cached = insightCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.payload;
 
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.payload;
-  }
-
-  let payload = {
-    text: localInsight(mode, article),
-    provider: "local"
-  };
-
+  let payload = { text: localInsight(mode, article), provider: "local" };
   try {
     const geminiText = await askGemini(mode, article);
-    if (geminiText) {
-      payload = {
-        text: geminiText,
-        provider: "gemini"
-      };
-    }
+    if (geminiText) payload = { text: geminiText, provider: "gemini" };
   } catch (error) {
     console.warn(`AI fallback used: ${error.message}`);
     payload = {
-      text: mode === "context"
-        ? `Context could not be generated right now. ${error.message}`
-        : localInsight(mode, article),
+      text: mode === "context" ? `Context could not be generated right now. ${error.message}` : localInsight(mode, article),
       provider: "gemini-error"
     };
   }
-
-  insightCache.set(cacheKey, {
-    payload,
-    expiresAt: Date.now() + CACHE_MS
-  });
-
+  insightCache.set(cacheKey, { payload, expiresAt: Date.now() + CACHE_MS });
   return payload;
 }
 
-async function handleInsight(req, res) {
+app.post("/api/insight", async (req, res) => {
   try {
-    const body = await readRequestBody(req);
-    const payload = JSON.parse(body || "{}");
+    const payload = req.body || {};
     const mode = payload.mode === "context" ? "context" : "summary";
     const article = normalizeArticle(payload.article);
     const insight = await generateInsight(mode, article);
-
-    sendJson(res, 200, {
-      mode,
-      ...insight
-    });
+    res.status(200).json({ mode, ...insight });
   } catch (error) {
-    sendJson(res, 400, {
-      error: error.message || "Unable to create insight."
-    });
+    res.status(400).json({ error: error.message || "Unable to create insight." });
   }
-}
+});
 
-async function serveStatic(req, res, pathname) {
-  const headOnly = req.method === "HEAD";
-  const safePath = pathname === "/" ? "/index.html" : pathname;
-  const decodedPath = decodeURIComponent(safePath);
-  const filePath = path.normalize(path.join(ROOT_DIR, decodedPath));
-
-  if (filePath !== ROOT_DIR && !filePath.startsWith(`${ROOT_DIR}${path.sep}`)) {
-    send(res, 403, "Forbidden", { "Content-Type": "text/plain; charset=utf-8" }, headOnly);
-    return;
-  }
-
+app.post("/api/assistant", async (req, res) => {
   try {
-    const data = await fs.readFile(filePath);
-    const ext = path.extname(filePath);
-
-    send(res, 200, data, {
-      "Content-Type": MIME_TYPES[ext] || "application/octet-stream",
-      "Cache-Control": "no-cache"
-    }, headOnly);
-  } catch {
-    send(res, 404, "Not found", { "Content-Type": "text/plain; charset=utf-8" }, headOnly);
-  }
-}
-
-// ─── AI Assistant ────────────────────────────────────────────────────────────
-
-async function handleAssistantRequest(req, res) {
-  try {
-    const body = await readRequestBody(req, 2 * 1024 * 1024); // 2MB limit
-    const { query, articles } = JSON.parse(body || "{}");
+    const { query, articles } = req.body || {};
     if (!query || !Array.isArray(articles)) {
-      sendJson(res, 400, { success: false, error: "Missing query or articles." });
-      return;
+      return res.status(400).json({ success: false, error: "Missing query or articles." });
     }
 
     const apiKey = process.env.GEMINI_API_KEY || DEFAULT_GEMINI_SUMMARY_KEY;
@@ -565,10 +367,7 @@ If no articles match, return {"articleIds": [], "quiz": []}.
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.2,
-          responseMimeType: "application/json"
-        }
+        generationConfig: { temperature: 0.2, responseMimeType: "application/json" }
       })
     });
 
@@ -581,115 +380,26 @@ If no articles match, return {"articleIds": [], "quiz": []}.
     const cleanText = rawText.replace(/^```json\n?/, "").replace(/```$/, "").trim();
     const parsed = JSON.parse(cleanText);
 
-    sendJson(res, 200, { success: true, ...parsed });
+    res.status(200).json({ success: true, ...parsed });
   } catch (error) {
     console.error("Assistant Error:", error.message);
-    sendJson(res, 500, { success: false, error: error.message });
+    res.status(500).json({ success: false, error: error.message });
   }
-}
+});
 
-async function handleRequest(req, res) {
-  try {
-    const rawUrl = req.url || "/";
-    const host = (req.headers && req.headers.host) ? req.headers.host : "localhost";
-    const requestUrl = new URL(rawUrl, `http://${host}`);
-
-    if (req.method === "OPTIONS") {
-      send(res, 204, "", {
-        "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type"
-      });
-      return;
-    }
-
-    if (!["GET", "HEAD", "POST"].includes(req.method)) {
-      send(res, 405, "Method not allowed", {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Allow": "GET, HEAD, POST, OPTIONS"
-      });
-      return;
-    }
-
-    if (requestUrl.pathname === "/api/assistant") {
-      if (req.method !== "POST") {
-        send(res, 405, "Method not allowed", {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Allow": "POST, OPTIONS"
-        });
-        return;
-      }
-      await handleAssistantRequest(req, res);
-      return;
-    }
-
-    if (requestUrl.pathname === "/api/insight") {
-      if (req.method !== "POST") {
-        send(res, 405, "Method not allowed", {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Allow": "POST, OPTIONS"
-        });
-        return;
-      }
-
-      await handleInsight(req, res);
-      return;
-    }
-
-    if (requestUrl.pathname === "/api/fact-check") {
-      if (req.method !== "POST") {
-        send(res, 405, "Method not allowed", {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Allow": "POST, OPTIONS"
-        });
-        return;
-      }
-
-      await handleFactCheckRequest(req, res);
-      return;
-    }
-
-    if (requestUrl.pathname === "/api/feed") {
-      await handleFeedProxy(req, res, requestUrl);
-      return;
-    }
-
-    await serveStatic(req, res, requestUrl.pathname);
-  } catch (err) {
-    console.error("handleRequest error:", err);
-    sendJson(res, 500, { error: err.message || "Internal server error" });
+app.use((req, res) => {
+  const publicIndex = path.join(__dirname, "public", "index.html");
+  if (fsSync.existsSync(publicIndex)) {
+    return res.sendFile(publicIndex);
   }
-}
-
-function createServer() {
-  return http.createServer((req, res) => handleRequest(req, res));
-}
-
-function start(port) {
-  const server = createServer();
-
-  server.on("error", (error) => {
-    if (error.code === "EADDRINUSE" && port < DEFAULT_PORT + 20) {
-      start(port + 1);
-      return;
-    }
-
-    console.error(error);
-    process.exitCode = 1;
-  });
-
-  server.listen(port, "0.0.0.0", () => {
-    console.log(`Pulsewire is running at http://localhost:${port}`);
-  });
-}
+  res.sendFile(path.join(__dirname, "index.html"));
+});
 
 if (require.main === module && !process.env.VERCEL) {
-  start(DEFAULT_PORT);
+  const PORT = Number(process.env.PORT) || 4173;
+  app.listen(PORT, () => {
+    console.log(`Pulsewire is running at http://localhost:${PORT}`);
+  });
 }
 
-handleRequest.handleRequest = handleRequest;
-handleRequest.handleFeedProxy = handleFeedProxy;
-handleRequest.handleInsight = handleInsight;
-handleRequest.handleFactCheckRequest = handleFactCheckRequest;
-handleRequest.handleAssistantRequest = handleAssistantRequest;
-
-module.exports = handleRequest;
+module.exports = app;
