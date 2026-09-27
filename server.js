@@ -69,6 +69,10 @@ function sendJson(res, status, payload, headOnly = false) {
 }
 
 function readRequestBody(req, limit = 32000) {
+  if (req.body) {
+    if (typeof req.body === "string") return Promise.resolve(req.body);
+    if (typeof req.body === "object") return Promise.resolve(JSON.stringify(req.body));
+  }
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
@@ -580,71 +584,73 @@ If no articles match, return {"articleIds": [], "quiz": []}.
   }
 }
 
-function createServer() {
-  return http.createServer(async (req, res) => {
-    const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+async function handleRequest(req, res) {
+  const requestUrl = new URL(req.url, `http://${req.headers.host || "localhost"}`);
 
-    if (req.method === "OPTIONS") {
-      send(res, 204, "", {
-        "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type"
-      });
-      return;
-    }
+  if (req.method === "OPTIONS") {
+    send(res, 204, "", {
+      "Access-Control-Allow-Methods": "GET, HEAD, POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type"
+    });
+    return;
+  }
 
-    if (!["GET", "HEAD", "POST"].includes(req.method)) {
+  if (!["GET", "HEAD", "POST"].includes(req.method)) {
+    send(res, 405, "Method not allowed", {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Allow": "GET, HEAD, POST, OPTIONS"
+    });
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/assistant") {
+    if (req.method !== "POST") {
       send(res, 405, "Method not allowed", {
         "Content-Type": "text/plain; charset=utf-8",
-        "Allow": "GET, HEAD, POST, OPTIONS"
+        "Allow": "POST, OPTIONS"
+      });
+      return;
+    }
+    await handleAssistantRequest(req, res);
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/insight") {
+    if (req.method !== "POST") {
+      send(res, 405, "Method not allowed", {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Allow": "POST, OPTIONS"
       });
       return;
     }
 
-    if (requestUrl.pathname === "/api/assistant") {
-      if (req.method !== "POST") {
-        send(res, 405, "Method not allowed", {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Allow": "POST, OPTIONS"
-        });
-        return;
-      }
-      await handleAssistantRequest(req, res);
+    await handleInsight(req, res);
+    return;
+  }
+
+  if (requestUrl.pathname === "/api/fact-check") {
+    if (req.method !== "POST") {
+      send(res, 405, "Method not allowed", {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Allow": "POST, OPTIONS"
+      });
       return;
     }
 
-    if (requestUrl.pathname === "/api/insight") {
-      if (req.method !== "POST") {
-        send(res, 405, "Method not allowed", {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Allow": "POST, OPTIONS"
-        });
-        return;
-      }
+    await handleFactCheckRequest(req, res);
+    return;
+  }
 
-      await handleInsight(req, res);
-      return;
-    }
+  if (requestUrl.pathname === "/api/feed") {
+    await handleFeedProxy(req, res, requestUrl);
+    return;
+  }
 
-    if (requestUrl.pathname === "/api/fact-check") {
-      if (req.method !== "POST") {
-        send(res, 405, "Method not allowed", {
-          "Content-Type": "text/plain; charset=utf-8",
-          "Allow": "POST, OPTIONS"
-        });
-        return;
-      }
+  await serveStatic(req, res, requestUrl.pathname);
+}
 
-      await handleFactCheckRequest(req, res);
-      return;
-    }
-
-    if (requestUrl.pathname === "/api/feed") {
-      await handleFeedProxy(req, res, requestUrl);
-      return;
-    }
-
-    await serveStatic(req, res, requestUrl.pathname);
-  });
+function createServer() {
+  return http.createServer((req, res) => handleRequest(req, res));
 }
 
 function start(port) {
@@ -660,9 +666,13 @@ function start(port) {
     process.exitCode = 1;
   });
 
-  server.listen(port, "127.0.0.1", () => {
-    console.log(`Pulsewire is running at http://127.0.0.1:${port}`);
+  server.listen(port, "0.0.0.0", () => {
+    console.log(`Pulsewire is running at http://localhost:${port}`);
   });
 }
 
-start(DEFAULT_PORT);
+if (require.main === module) {
+  start(DEFAULT_PORT);
+}
+
+module.exports = handleRequest;
