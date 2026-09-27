@@ -1,3 +1,35 @@
 {
-  "cleanUrls": true
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/*.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "public/**/*",
+      "use": "@vercel/static"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/api/feed",
+      "dest": "/api/feed.js"
+    },
+    {
+      "src": "/api/insight",
+      "dest": "/api/insight.js"
+    },
+    {
+      "src": "/api/fact-check",
+      "dest": "/api/fact-check.js"
+    },
+    {
+      "src": "/api/assistant",
+      "dest": "/api/assistant.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/public/$1"
+    }
+  ]
 }
