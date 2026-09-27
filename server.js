@@ -55,10 +55,14 @@ const DEFAULT_GEMINI_CONTEXT_KEY = "AIzaSyDNCpoeEN_yja2L1eFLtjMJPZ6vIRqAbdA";
 const GOOGLE_FACT_API_KEY = process.env.GOOGLE_FACT_API_KEY || "";
 
 function send(res, status, body, headers = {}, headOnly = false) {
-  res.writeHead(status, {
-    "X-Content-Type-Options": "nosniff",
-    ...headers
-  });
+  if (res.headersSent) return;
+  res.statusCode = status;
+  for (const [key, val] of Object.entries(headers)) {
+    res.setHeader(key, val);
+  }
+  if (!res.getHeader("X-Content-Type-Options")) {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+  }
   res.end(headOnly ? undefined : body);
 }
 
