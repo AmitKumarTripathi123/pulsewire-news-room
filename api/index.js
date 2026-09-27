@@ -1,5 +1,3 @@
-const app = require("../server.js");
-
 module.exports = (req, res) => {
-  return app(req, res);
+  res.status(200).json({ status: "Pulsewire API Online" });
 };
